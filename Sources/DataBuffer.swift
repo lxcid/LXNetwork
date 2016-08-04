@@ -1,5 +1,10 @@
 import Foundation
 
+/// DataBuffer uses a serial queue to manage its IO operations asynchornously.
+///
+/// The use of dispatch queue ensure that IO operations are thread safe. Order
+/// of IO operations are often important and care must taken when scheduling
+/// IO operations concurrently so as to ensure a deterministic behavior.
 final class DataBuffer {
     enum OutResult {
         case NoOperation
