@@ -1,19 +1,19 @@
 import Foundation
 
 final class DataBuffer {
-    enum ReadResult {
+    enum OutResult {
         case NoOperation
         case Consume(bytes: Int)
     }
     
-    typealias ReadHandler = (data: Data) -> ReadResult
+    typealias OutHandler = (data: Data) -> OutResult
     typealias CompletionHandler = () -> Void
     
     let serialQueue: DispatchQueue
     var data: Data
     
     init(serialQueue optSerialQueue: DispatchQueue? = nil) {
-        self.serialQueue = optSerialQueue ?? DispatchQueue(label: "com.trifia.networker.databuffer", attributes: [ .serial ], target: nil)
+        self.serialQueue = optSerialQueue ?? DispatchQueue(label: "com.lxcid.network.databuffer", attributes: [ .serial ], target: nil)
         self.data = Data()
     }
     
@@ -24,7 +24,7 @@ final class DataBuffer {
         }
     }
     
-    func asyncOut(handler: ReadHandler, completionHandler: CompletionHandler? = nil) {
+    func asyncOut(handler: OutHandler, completionHandler: CompletionHandler? = nil) {
         self.serialQueue.async {
             self.out(handler: handler)
             completionHandler?()
@@ -38,7 +38,7 @@ final class DataBuffer {
         self.data.append(data)
     }
     
-    func out(handler: ReadHandler) {
+    func out(handler: OutHandler) {
         if #available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
             dispatchPrecondition(condition: .onQueue(self.serialQueue))
         }
