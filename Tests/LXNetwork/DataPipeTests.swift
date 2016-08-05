@@ -6,14 +6,14 @@ class DataPipeTests: XCTestCase {
         let dataPipe = DataPipe()
         
         let e1 = self.expectation(description: "Expect a HTTP request-line.")
-        let requestLineData = "GET /index.html HTTP/1.1\r\n".data(using: .utf8)!
+        let httpRequestData = "GET /index.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n".data(using: .utf8)!
         dataPipe.outHandler = { (data: Data) -> DataBuffer.OutResult in
-            if data == requestLineData {
+            if data == httpRequestData {
                 e1.fulfill()
             }
             return .NoOperation
         }
-        dataPipe.asyncIn(data: requestLineData)
+        dataPipe.asyncIn(data: httpRequestData)
         self.waitForExpectations(timeout: 1.0)
     }
     
