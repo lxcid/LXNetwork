@@ -41,8 +41,12 @@ final class DataPipe {
         }
     }
     
-    /// NOTE: Dispatch source was considered for coalescing out events, but because
-    /// it only promise that at least an out event is enqueued but not ensuring all in
-    /// operations are flush when the last out event is executed. This behavior might be
-    /// surprising for developer.
+    /// NOTE: (stan@trifia.com) Dispatch source was considered for coalescing out events,
+    /// but because it only promise that at least an out event is enqueued but not ensuring
+    /// all in operations are flush when the last out event is executed. This behavior
+    /// might be surprising for developer.
+    
+    /// NOTE: (stan@trifia.com) We choose callback over delegate because delegate is
+    /// inconvience when create more than one instance of DataPipe. Callback prevents the
+    /// need for workaround in such situations.
 }
