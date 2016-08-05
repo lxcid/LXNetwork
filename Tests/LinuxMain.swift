@@ -3,4 +3,5 @@ import XCTest
 
 XCTMain([
      testCase(DataBufferTests.allTests),
+     testCase(DataPipeTests.allTests)
 ])
