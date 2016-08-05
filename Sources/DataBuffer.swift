@@ -52,7 +52,8 @@ final class DataBuffer {
         case .NoOperation:
             break // noop
         case .Consume(bytes: let bytes):
-            self.data = self.data.subdata(in: Range(uncheckedBounds: (0, bytes)))
+            precondition(self.data.count <= bytes, "`bytes` (\(bytes)) must not be larger than `self.data.count` (\(self.data.count)).")
+            self.data = self.data.subdata(in: Range(uncheckedBounds: (bytes, self.data.count)))
         }
     }
 }
