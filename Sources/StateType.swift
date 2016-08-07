@@ -9,7 +9,7 @@ protocol StateType {
     associatedtype OutputCommand
     
     /// In response to an event, a state may transition to some new value, and it may emit a command.
-    mutating func handleEvent(event: InputEvent) -> OutputCommand
+    //mutating func handleEvent(event: InputEvent) -> OutputCommand
     
     // If you're not familiar with Swift, the mutation semantics here may seem like a very big red
     // flag, destroying the purity of this type. In fact, because states have *value semantics*,
@@ -20,7 +20,7 @@ protocol StateType {
     // If this is confusing, keep in mind that we could equivalently define this as a function
     // which returns both a new state value and an optional OutputCommand (it just creates some
     // line noise later):
-    //   func handleEvent(event: InputEvent) -> (Self, OutputCommand)
+    func handleEvent(event: InputEvent) -> (Self, OutputCommand)?
     
     /// State machines must specify an initial value.
     static var initialState: Self { get }

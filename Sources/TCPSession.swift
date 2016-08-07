@@ -14,6 +14,7 @@ final class TCPSession {
     let writeQueue: DispatchQueue
     var readPipe: DataPipe
     var writePipe: DataPipe
+    let state: Atomic<State>
     
     weak var delegate: TCPSessionDelegate?
     
@@ -39,6 +40,7 @@ final class TCPSession {
         self.writeQueue = DispatchQueue(label: "com.lxcid.network.tcp.write", attributes: [ .serial ], target: nil)
         self.readPipe = DataPipe(serialQueue: self.readQueue)
         self.writePipe = DataPipe(serialQueue: self.writeQueue)
+        self.state = Atomic(value: State.initialState)
         
         let commonStreamEvents: CFStreamEventType = [
             .openCompleted,
@@ -81,7 +83,7 @@ final class TCPSession {
         guard CFWriteStreamOpen(writeStream) else {
             throw Error.NoWriteStream
         }
-        print("connect")
+        self.state.value = .Connected
     }
     
     func disconnect() {
@@ -128,6 +130,26 @@ final class TCPSession {
         } else {
             return .NoOperation
         }
+    }
+}
+
+extension TCPSession {
+    enum State : StateType {
+        case Initial
+        case Connected
+        case Disconnected
+        
+        enum InputEvent {
+        }
+        
+        enum OutputCommand {
+        }
+        
+        func handleEvent(event: InputEvent) -> (State, OutputCommand)? {
+            return nil
+        }
+        
+        static let initialState = State.Initial
     }
 }
 
@@ -182,6 +204,7 @@ func readCB(_ readStream: CFReadStream?, _ event: CFStreamEventType, _ optContex
         print("read: error occurred")
     } else if event.contains(.endEncountered) {
         print("read: end encountered")
+        session.state.value = .Disconnected
     }
 }
 
@@ -198,5 +221,6 @@ func writeCB(_ writeStream: CFWriteStream?, _ event: CFStreamEventType, _ optCon
         print("write: error occurred")
     } else if event.contains(.endEncountered) {
         print("write: end encountered")
+        session.state.value = .Disconnected
     }
 }
