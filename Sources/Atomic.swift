@@ -1,14 +1,14 @@
 import Foundation
 
-/// AtomicValue provides linearized get and set operations on value (denoted as T),
+/// Atomic provides linearized get and set operations on value (denoted as T),
 /// thus guaranteed isolation from concurrent access. This is achieved through
 /// The use of concurrent queue which implements a multiple get, single set behavior.
 ///
-/// AtomicValue is defined as class for the following reasons:
-/// - Allowing properties of type AtomicValue be specified as constant,
+/// Atomic is defined as class for the following reasons:
+/// - Allowing properties of type Atomic be specified as constant,
 ///    preventing modification to the underlying constant.
 /// - Async mutation of self is not possible in struct.
-final class AtomicValue<T> {
+final class Atomic<T> {
     var _value: T
     let queue: DispatchQueue
     
@@ -28,6 +28,6 @@ final class AtomicValue<T> {
     
     init(value: T, queue optQueue: DispatchQueue? = nil) {
         self._value = value
-        self.queue = optQueue ?? DispatchQueue(label: "com.lxcid.network.atomicvalue", attributes: [ .concurrent ], target: nil)
+        self.queue = optQueue ?? DispatchQueue(label: "com.lxcid.network.atomic", attributes: [ .concurrent ], target: nil)
     }
 }
