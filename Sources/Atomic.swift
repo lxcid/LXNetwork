@@ -30,4 +30,27 @@ final class Atomic<T> {
         self._value = value
         self.queue = optQueue ?? DispatchQueue(label: "com.lxcid.network.atomic", attributes: [ .concurrent ], target: nil)
     }
+    
+    /// `transaction` execute a transaction that may result in an operation.
+    ///
+    /// Sometimes you execute a get operation, and may followed by
+    /// a set operation if condition are met.
+    func transaction(transaction: (currentValue: T) -> Operation<T>) {
+        self.queue.async(flags: [ .barrier ]) {
+            let operation = transaction(currentValue: self._value)
+            switch (operation) {
+            case .None:
+                break // noop
+            case .Set(let newValue, let completionHandler):
+                self._value = newValue
+                completionHandler?()
+            }
+        }
+    }
+}
+
+enum Operation<T> {
+    case None
+    /// (newValue, completionHandler)
+    case Set(T, (@noescape () -> Void)?)
 }

@@ -17,7 +17,6 @@ final class TCPSession {
     let _state: Atomic<State>
     var state: State {
         get { return self._state.value }
-        set { self._state.value = newValue }
     }
     
     weak var delegate: TCPSessionDelegate?
@@ -80,16 +79,6 @@ final class TCPSession {
         self.disconnect()
     }
     
-    func connect() throws {
-        guard CFReadStreamOpen(readStream) else {
-            throw Error.NoReadStream
-        }
-        guard CFWriteStreamOpen(writeStream) else {
-            throw Error.NoWriteStream
-        }
-        self.state = .Connected
-    }
-    
     func disconnect() {
         let commonStreamEvents: CFStreamEventType = [
             .openCompleted,
@@ -135,25 +124,76 @@ final class TCPSession {
             return .NoOperation
         }
     }
+    
+    func _openReadWriteStreams() throws {
+        guard CFReadStreamOpen(readStream) else {
+            throw Error.NoReadStream
+        }
+        guard CFWriteStreamOpen(writeStream) else {
+            throw Error.NoWriteStream
+        }
+    }
 }
 
 extension TCPSession {
     enum State : StateType {
         case Initial
+        case Connecting
         case Connected
         case Disconnected
         
         enum InputEvent {
+            case Open
+            case Opened
+            case Closed(error: ErrorProtocol?)
         }
         
         enum OutputCommand {
+            case None
+            case Connect
         }
         
         func handleEvent(event: InputEvent) -> (State, OutputCommand)? {
-            return nil
+            switch (self, event) {
+            case (.Initial, .Open):
+                return (.Connecting, .Connect)
+            case (.Connecting, .Opened):
+                return (.Connected, .None)
+            default:
+                return nil
+            }
         }
         
         static let initialState = State.Initial
+    }
+    
+    func sendEvent(_ inputEvent: State.InputEvent) {
+        self._state.transaction {
+            guard let (newState, outputCommand) = $0.handleEvent(event: inputEvent) else {
+                return .None
+            }
+            return Operation<TCPSession.State>.Set(newState) {
+                self.handleCommand(outputCommand)
+            }
+        }
+    }
+    
+    func handleCommand(_ outputCommand: State.OutputCommand) {
+        switch (outputCommand) {
+        case .None:
+            break // noop
+        case .Connect:
+            do {
+                try self._openReadWriteStreams()
+                self.sendEvent(.Opened)
+            } catch _ {
+                self.sendEvent(.Closed(error: nil)) // TODO: (stan@trifia.com) Provide error…
+            }
+        }
+    }
+    
+    func open() {
+        self.sendEvent(.Open)
     }
 }
 
@@ -208,7 +248,7 @@ func readCB(_ readStream: CFReadStream?, _ event: CFStreamEventType, _ optContex
         print("read: error occurred")
     } else if event.contains(.endEncountered) {
         print("read: end encountered")
-        session.state = .Disconnected
+        //session.state = .Disconnected
     }
 }
 
@@ -225,6 +265,6 @@ func writeCB(_ writeStream: CFWriteStream?, _ event: CFStreamEventType, _ optCon
         print("write: error occurred")
     } else if event.contains(.endEncountered) {
         print("write: end encountered")
-        session.state = .Disconnected
+        //session.state = .Disconnected
     }
 }
