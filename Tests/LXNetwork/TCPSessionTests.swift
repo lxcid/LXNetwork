@@ -7,9 +7,9 @@ class TCPSessionTests: XCTestCase {
         do {
             let tcpSession = try TCPSession(host: "google.com", port: 80, secure: false)
             tcpSession.delegate = self
-            try tcpSession.connect()
+            tcpSession.open()
             let requestData = "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n".data(using: .utf8)!
-            tcpSession.asyncSend(data: requestData)
+            try tcpSession.asyncSend(data: requestData)
             let e1 = self.expectation(description: "Some wait for TCP")
             self.waitForExpectations(timeout: 10.0)
             print(tcpSession)

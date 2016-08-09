@@ -76,28 +76,20 @@ final class TCPSession {
     }
     
     deinit {
-        self.disconnect()
+        self._closeReadWriteStreams()
     }
     
-    func disconnect() {
-        let commonStreamEvents: CFStreamEventType = [
-            .openCompleted,
-            .errorOccurred,
-            .endEncountered
-        ]
-        CFReadStreamSetClient(self.readStream, commonStreamEvents.union(.hasBytesAvailable).rawValue, nil, nil)
-        CFWriteStreamSetClient(self.writeStream, commonStreamEvents.union(.canAcceptBytes).rawValue, nil, nil)
-        CFReadStreamSetDispatchQueue(self.readStream, nil)
-        CFWriteStreamSetDispatchQueue(self.writeStream, nil)
-        CFReadStreamClose(self.readStream)
-        CFWriteStreamClose(self.writeStream)
-    }
-    
-    func asyncSend(data: Data) {
+    func asyncSend(data: Data) throws {
+        guard self.state.isReady else {
+            throw Error.NotOpened
+        }
         self.writePipe.asyncIn(data: data)
     }
     
-    func flush() {
+    func flush() throws {
+        guard self.state.isReady else {
+            throw Error.NotOpened
+        }
         self.writePipe.flush()
     }
     
@@ -133,38 +125,60 @@ final class TCPSession {
             throw Error.NoWriteStream
         }
     }
+    
+    func _closeReadWriteStreams() {
+        let commonStreamEvents: CFStreamEventType = [
+            .openCompleted,
+            .errorOccurred,
+            .endEncountered
+        ]
+        CFReadStreamSetClient(self.readStream, commonStreamEvents.union(.hasBytesAvailable).rawValue, nil, nil)
+        CFWriteStreamSetClient(self.writeStream, commonStreamEvents.union(.canAcceptBytes).rawValue, nil, nil)
+        CFReadStreamSetDispatchQueue(self.readStream, nil)
+        CFWriteStreamSetDispatchQueue(self.writeStream, nil)
+        CFReadStreamClose(self.readStream)
+        CFWriteStreamClose(self.writeStream)
+    }
 }
 
 extension TCPSession {
     enum State : StateType {
         case Initial
-        case Connecting
-        case Connected
-        case Disconnected
+        case Opening
+        case Opened
+        case Closing
+        case Closed
         
         enum InputEvent {
             case Open
             case Opened
-            case Closed(error: ErrorProtocol?)
+            case Close(ErrorProtocol?)
         }
         
         enum OutputCommand {
             case None
-            case Connect
+            case Open
+            case Close
         }
         
         func handleEvent(event: InputEvent) -> (State, OutputCommand)? {
             switch (self, event) {
             case (.Initial, .Open):
-                return (.Connecting, .Connect)
-            case (.Connecting, .Opened):
-                return (.Connected, .None)
+                return (.Opening, .Open)
+            case (.Opening, .Opened):
+                return (.Opened, .None)
+            case (let state, .Close(_)) where state != .Closed:
+                return (.Closing, .Close)
             default:
                 return nil
             }
         }
         
         static let initialState = State.Initial
+        
+        var isReady: Bool {
+            return self == .Opened
+        }
     }
     
     func sendEvent(_ inputEvent: State.InputEvent) {
@@ -182,13 +196,16 @@ extension TCPSession {
         switch (outputCommand) {
         case .None:
             break // noop
-        case .Connect:
+        case .Open:
             do {
                 try self._openReadWriteStreams()
                 self.sendEvent(.Opened)
-            } catch _ {
-                self.sendEvent(.Closed(error: nil)) // TODO: (stan@trifia.com) Provide error…
+            } catch {
+                self.sendEvent(.Close(error))
             }
+        case .Close:
+            self._closeReadWriteStreams()
+            self.sendEvent(.Close(nil))
         }
     }
     
@@ -201,6 +218,7 @@ extension TCPSession {
     enum Error : ErrorProtocol {
         case NoReadStream
         case NoWriteStream
+        case NotOpened
         
         case NotImplemented
     }
@@ -243,7 +261,7 @@ func readCB(_ readStream: CFReadStream?, _ event: CFStreamEventType, _ optContex
             session.readPipe.flush()
         }
     } else if event.contains(.openCompleted) {
-        print("read: open completed")
+        // noop
     } else if event.contains(.errorOccurred) {
         print("read: error occurred")
     } else if event.contains(.endEncountered) {
@@ -258,9 +276,9 @@ func writeCB(_ writeStream: CFWriteStream?, _ event: CFStreamEventType, _ optCon
     }
     let session = Unmanaged<TCPSession>.fromOpaque(context).takeUnretainedValue()
     if event.contains(.canAcceptBytes) {
-        session.flush()
+        do { try session.flush() } catch {}
     } else if event.contains(.openCompleted) {
-        print("write: open completed")
+        // noop
     } else if event.contains(.errorOccurred) {
         print("write: error occurred")
     } else if event.contains(.endEncountered) {
