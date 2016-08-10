@@ -12,7 +12,7 @@ class TCPSessionTests: XCTestCase {
             try tcpSession.asyncSend(data: requestData)
             let e1 = self.expectation(description: "Some wait for TCP")
             self.waitForExpectations(timeout: 10.0)
-            print(tcpSession)
+            XCTAssertEqual(tcpSession.state, .Closed)
         } catch _ {
             XCTFail()
         }

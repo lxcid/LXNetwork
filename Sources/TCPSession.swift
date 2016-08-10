@@ -153,6 +153,7 @@ extension TCPSession {
             case Open
             case Opened
             case Close(ErrorProtocol?)
+            case Closed
         }
         
         enum OutputCommand {
@@ -169,6 +170,8 @@ extension TCPSession {
                 return (.Opened, .None)
             case (let state, .Close(_)) where state != .Closed:
                 return (.Closing, .Close)
+            case (.Closing, .Closed):
+                return (.Closed, .None)
             default:
                 return nil
             }
@@ -181,15 +184,19 @@ extension TCPSession {
         }
     }
     
-    func sendEvent(_ inputEvent: State.InputEvent) {
-        self._state.transaction {
-            guard let (newState, outputCommand) = $0.handleEvent(event: inputEvent) else {
+    func stateMachine(_ inputEvent: State.InputEvent) -> Atomic<State>.TransactionHandler {
+        return { (currentValue: State) -> Operation<State> in
+            guard let (newState, outputCommand) = currentValue.handleEvent(event: inputEvent) else {
                 return .None
             }
             return Operation<TCPSession.State>.Set(newState) {
                 self.handleCommand(outputCommand)
             }
         }
+    }
+    
+    func sendEvent(_ inputEvent: State.InputEvent, dispatch: Dispatch = .Async) {
+        self._state.transaction(dispatch: dispatch, execute: self.stateMachine(inputEvent))
     }
     
     func handleCommand(_ outputCommand: State.OutputCommand) {
@@ -199,18 +206,18 @@ extension TCPSession {
         case .Open:
             do {
                 try self._openReadWriteStreams()
-                self.sendEvent(.Opened)
+                self.sendEvent(.Opened, dispatch: .Current)
             } catch {
-                self.sendEvent(.Close(error))
+                self.sendEvent(.Close(error), dispatch: .Current)
             }
         case .Close:
             self._closeReadWriteStreams()
-            self.sendEvent(.Close(nil))
+            self.sendEvent(.Close(nil), dispatch: .Current)
         }
     }
     
     func open() {
-        self.sendEvent(.Open)
+        self.sendEvent(.Open, dispatch: .Sync)
     }
 }
 
@@ -265,8 +272,7 @@ func readCB(_ readStream: CFReadStream?, _ event: CFStreamEventType, _ optContex
     } else if event.contains(.errorOccurred) {
         print("read: error occurred")
     } else if event.contains(.endEncountered) {
-        print("read: end encountered")
-        //session.state = .Disconnected
+        session.sendEvent(.Close(nil))
     }
 }
 
@@ -281,8 +287,7 @@ func writeCB(_ writeStream: CFWriteStream?, _ event: CFStreamEventType, _ optCon
         // noop
     } else if event.contains(.errorOccurred) {
         print("write: error occurred")
-    } else if event.contains(.endEncountered) {
-        print("write: end encountered")
-        //session.state = .Disconnected
     }
+    // TODO: (stan@trifia.com) I believe write stream does not inform us whether the TCP connection is closed.
+    // So end encountered condition is not implemented here. Have to read the docs to confirm…
 }
