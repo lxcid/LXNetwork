@@ -76,18 +76,19 @@ final class TCPSession {
     }
     
     deinit {
-        self._closeReadWriteStreams()
+        print("DEINIT")
+        self.close()
     }
     
     func asyncSend(data: Data) throws {
-        guard self.state.isReady else {
+        guard self.state.isOpened else {
             throw Error.NotOpened
         }
         self.writePipe.asyncIn(data: data)
     }
     
     func flush() throws {
-        guard self.state.isReady else {
+        guard self.state.isOpened else {
             throw Error.NotOpened
         }
         self.writePipe.flush()
@@ -147,31 +148,31 @@ extension TCPSession {
         case Opening
         case Opened
         case Closing
-        case Closed
+        case Closed(ErrorProtocol?)
         
         enum InputEvent {
             case Open
             case Opened
             case Close(ErrorProtocol?)
-            case Closed
+            case Closed(ErrorProtocol?)
         }
         
         enum OutputCommand {
             case None
             case Open
-            case Close
+            case Close(ErrorProtocol?)
         }
         
         func handleEvent(event: InputEvent) -> (State, OutputCommand)? {
             switch (self, event) {
-            case (.Initial, .Open):
-                return (.Opening, .Open)
-            case (.Opening, .Opened):
-                return (.Opened, .None)
-            case (let state, .Close(_)) where state != .Closed:
-                return (.Closing, .Close)
-            case (.Closing, .Closed):
-                return (.Closed, .None)
+            case (State.Initial, InputEvent.Open):
+                return (State.Opening, OutputCommand.Open)
+            case (State.Opening, InputEvent.Opened):
+                return (State.Opened, OutputCommand.None)
+            case (let state, InputEvent.Close(let error)) where !state.isClosed:
+                return (State.Closing, OutputCommand.Close(error))
+            case (State.Closing, InputEvent.Closed(let error)):
+                return (State.Closed(error), OutputCommand.None)
             default:
                 return nil
             }
@@ -179,8 +180,20 @@ extension TCPSession {
         
         static let initialState = State.Initial
         
-        var isReady: Bool {
-            return self == .Opened
+        var isOpened: Bool {
+            if case State.Opened = self {
+                return true
+            } else {
+                return false
+            }
+        }
+        
+        var isClosed: Bool {
+            if case State.Closed(_) = self {
+                return true
+            } else {
+                return false
+            }
         }
     }
     
@@ -210,14 +223,18 @@ extension TCPSession {
             } catch {
                 self.sendEvent(.Close(error), dispatch: .Current)
             }
-        case .Close:
+        case .Close(let error):
             self._closeReadWriteStreams()
-            self.sendEvent(.Close(nil), dispatch: .Current)
+            self.sendEvent(.Closed(error), dispatch: .Current)
         }
     }
     
     func open() {
         self.sendEvent(.Open, dispatch: .Sync)
+    }
+    
+    func close() {
+        self.sendEvent(.Close(nil), dispatch: .Sync)
     }
 }
 
@@ -226,19 +243,20 @@ extension TCPSession {
         case NoReadStream
         case NoWriteStream
         case NotOpened
+        case Unknown
         
         case NotImplemented
     }
 }
 
-func readCB(_ readStream: CFReadStream?, _ event: CFStreamEventType, _ optContext: UnsafeMutablePointer<Void>?) {
-    guard let context = optContext else {
+func readCB(_ optReadStream: CFReadStream?, _ event: CFStreamEventType, _ optContext: UnsafeMutablePointer<Void>?) {
+    guard let readStream = optReadStream, let context = optContext else {
         return
     }
     let session = Unmanaged<TCPSession>.fromOpaque(context).takeUnretainedValue()
     if event.contains(.hasBytesAvailable) {
         var readCount = 0
-        while (CFReadStreamHasBytesAvailable(session.readStream)) {
+        while (CFReadStreamHasBytesAvailable(readStream)) {
             let bufferCount = 1024
             guard var buffer = Data(count: bufferCount) else {
                 return
@@ -251,11 +269,14 @@ func readCB(_ readStream: CFReadStream?, _ event: CFStreamEventType, _ optContex
                     buffer.resetBytes(in: range)
                     return subdata
                 } else if numberOfBytesRead < 0 {
-                    // TODO: (stan@trifia.com) Encountered error. We should log…
-                    print("read error: \(numberOfBytesRead)")
+                    // -1 if either the stream is not open or an error occurs.
+                    // We do not handle thsi case as we expect an errorOccurred
+                    // callback to happen
                     return nil
                 } else {
-                    print("read zero!")
+                    // 0 if the stream has reached its end
+                    // We do not handle thsi case as we expect an errorOccurred
+                    // callback to happen
                     return nil
                 }
             }
@@ -270,14 +291,15 @@ func readCB(_ readStream: CFReadStream?, _ event: CFStreamEventType, _ optContex
     } else if event.contains(.openCompleted) {
         // noop
     } else if event.contains(.errorOccurred) {
-        print("read: error occurred")
+        let error = CFReadStreamCopyError(readStream) as ErrorProtocol? ?? TCPSession.Error.Unknown
+        session.sendEvent(.Close(error))
     } else if event.contains(.endEncountered) {
         session.sendEvent(.Close(nil))
     }
 }
 
-func writeCB(_ writeStream: CFWriteStream?, _ event: CFStreamEventType, _ optContext: UnsafeMutablePointer<Void>?) {
-    guard let context = optContext else {
+func writeCB(_ optWriteStream: CFWriteStream?, _ event: CFStreamEventType, _ optContext: UnsafeMutablePointer<Void>?) {
+    guard let writeStream = optWriteStream, let context = optContext else {
         return
     }
     let session = Unmanaged<TCPSession>.fromOpaque(context).takeUnretainedValue()
@@ -286,7 +308,8 @@ func writeCB(_ writeStream: CFWriteStream?, _ event: CFStreamEventType, _ optCon
     } else if event.contains(.openCompleted) {
         // noop
     } else if event.contains(.errorOccurred) {
-        print("write: error occurred")
+        let error = CFWriteStreamCopyError(writeStream) as ErrorProtocol? ?? TCPSession.Error.Unknown
+        session.sendEvent(.Close(error))
     }
     // TODO: (stan@trifia.com) I believe write stream does not inform us whether the TCP connection is closed.
     // So end encountered condition is not implemented here. Have to read the docs to confirm…
