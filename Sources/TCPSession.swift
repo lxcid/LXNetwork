@@ -128,13 +128,8 @@ final class TCPSession {
     }
     
     func _closeReadWriteStreams() {
-        let commonStreamEvents: CFStreamEventType = [
-            .openCompleted,
-            .errorOccurred,
-            .endEncountered
-        ]
-        CFReadStreamSetClient(self.readStream, commonStreamEvents.union(.hasBytesAvailable).rawValue, nil, nil)
-        CFWriteStreamSetClient(self.writeStream, commonStreamEvents.union(.canAcceptBytes).rawValue, nil, nil)
+        CFReadStreamSetClient(self.readStream, 0, nil, nil)
+        CFWriteStreamSetClient(self.writeStream, 0, nil, nil)
         CFReadStreamSetDispatchQueue(self.readStream, nil)
         CFWriteStreamSetDispatchQueue(self.writeStream, nil)
         CFReadStreamClose(self.readStream)
