@@ -2,7 +2,8 @@ import CoreFoundation
 import Foundation
 
 protocol TCPSessionDelegate : class {
-    func session(session: TCPSession, didReceiveData data: Data) -> DataBuffer.OutResult
+    func session(_ session: TCPSession, didReceiveData data: Data) -> DataBuffer.OutResult
+    func session(_ session: TCPSession, didCloseWithError error: Swift.Error?)
 }
 
 final class TCPSession {
@@ -71,12 +72,12 @@ final class TCPSession {
             guard let strongSelf = self, let delegate = strongSelf.delegate else {
                 return .NoOperation
             }
-            return delegate.session(session: strongSelf, didReceiveData: data)
+            return delegate.session(strongSelf, didReceiveData: data)
         }
     }
     
     deinit {
-        print("DEINIT")
+        // FIXME: (stan@trifia.com) A deadlock could appear if state queue end up releasing the session.
         self.close()
     }
     
@@ -156,6 +157,7 @@ extension TCPSession {
             case None
             case Open
             case Close(Swift.Error?)
+            case Closed(Swift.Error?)
         }
         
         func handleEvent(event: InputEvent) -> (State, OutputCommand)? {
@@ -167,7 +169,7 @@ extension TCPSession {
             case (let state, InputEvent.Close(let error)) where !state.isClosed:
                 return (State.Closing, OutputCommand.Close(error))
             case (State.Closing, InputEvent.Closed(let error)):
-                return (State.Closed(error), OutputCommand.None)
+                return (State.Closed(error), OutputCommand.Closed(error))
             default:
                 return nil
             }
@@ -222,6 +224,8 @@ extension TCPSession {
         case .Close(let error):
             self._closeReadWriteStreams()
             self.sendEvent(.Closed(error), dispatch: .Current)
+        case .Closed(let error):
+            self.delegate?.session(self, didCloseWithError: error)
         }
     }
     
