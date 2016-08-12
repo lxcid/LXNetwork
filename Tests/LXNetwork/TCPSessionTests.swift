@@ -11,7 +11,7 @@ class TCPSessionTests: XCTestCase {
             let requestData = "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n".data(using: .utf8)!
             try session.asyncSend(data: requestData)
             let _ = self.expectation(description: "Some wait for TCP")
-            self.waitForExpectations(timeout: 10.0)
+            self.waitForExpectations(timeout: 5.0)
 //            if case TCPSession.State.Closed(let error) = session.state {
 //                XCTAssertNil(error)
 //            } else {
@@ -21,10 +21,6 @@ class TCPSessionTests: XCTestCase {
             XCTFail()
         }
         print("HAHA")
-        for i in 0...1000 {
-            print(i)
-        }
-        print("hehehe")
     }
     
     static var allTests : [(String, (TCPSessionTests) -> () throws -> Void)] {

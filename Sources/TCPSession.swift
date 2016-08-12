@@ -39,8 +39,8 @@ final class TCPSession {
         self.port = port
         self.readStream = readStream
         self.writeStream = writeStream
-        self.readQueue = DispatchQueue(label: "com.lxcid.network.tcp.read", attributes: [ .serial ], target: nil)
-        self.writeQueue = DispatchQueue(label: "com.lxcid.network.tcp.write", attributes: [ .serial ], target: nil)
+        self.readQueue = DispatchQueue(label: "com.lxcid.network.tcp.read", attributes: [], target: nil)
+        self.writeQueue = DispatchQueue(label: "com.lxcid.network.tcp.write", attributes: [], target: nil)
         self.readPipe = DataPipe(serialQueue: self.readQueue)
         self.writePipe = DataPipe(serialQueue: self.writeQueue)
         self._state = Atomic(value: State.initialState)
@@ -143,19 +143,19 @@ extension TCPSession {
         case Opening
         case Opened
         case Closing
-        case Closed(ErrorProtocol?)
+        case Closed(Swift.Error?)
         
         enum InputEvent {
             case Open
             case Opened
-            case Close(ErrorProtocol?)
-            case Closed(ErrorProtocol?)
+            case Close(Swift.Error?)
+            case Closed(Swift.Error?)
         }
         
         enum OutputCommand {
             case None
             case Open
-            case Close(ErrorProtocol?)
+            case Close(Swift.Error?)
         }
         
         func handleEvent(event: InputEvent) -> (State, OutputCommand)? {
@@ -197,6 +197,7 @@ extension TCPSession {
             guard let (newState, outputCommand) = currentValue.handleEvent(event: inputEvent) else {
                 return .None
             }
+            print("Changing State:", newState)
             return Operation<TCPSession.State>.Set(newState) {
                 self.handleCommand(outputCommand)
             }
@@ -234,7 +235,7 @@ extension TCPSession {
 }
 
 extension TCPSession {
-    enum Error : ErrorProtocol {
+    enum Error : Swift.Error {
         case NoReadStream
         case NoWriteStream
         case NotOpened
@@ -253,9 +254,7 @@ func readCB(_ optReadStream: CFReadStream?, _ event: CFStreamEventType, _ optCon
         var readCount = 0
         while (CFReadStreamHasBytesAvailable(readStream)) {
             let bufferCount = 1024
-            guard var buffer = Data(count: bufferCount) else {
-                return
-            }
+            var buffer = Data(count: bufferCount)
             let optData = buffer.withUnsafeMutableBytes { (bufferPtr: UnsafeMutablePointer<UInt8>) -> Data? in
                 let numberOfBytesRead = CFReadStreamRead(readStream, bufferPtr, bufferCount)
                 if numberOfBytesRead > 0 {
@@ -286,7 +285,7 @@ func readCB(_ optReadStream: CFReadStream?, _ event: CFStreamEventType, _ optCon
     } else if event.contains(.openCompleted) {
         // noop
     } else if event.contains(.errorOccurred) {
-        let error = CFReadStreamCopyError(readStream) as ErrorProtocol? ?? TCPSession.Error.Unknown
+        let error = CFReadStreamCopyError(readStream) as Swift.Error? ?? TCPSession.Error.Unknown
         session.sendEvent(.Close(error))
     } else if event.contains(.endEncountered) {
         session.sendEvent(.Close(nil))
@@ -303,7 +302,7 @@ func writeCB(_ optWriteStream: CFWriteStream?, _ event: CFStreamEventType, _ opt
     } else if event.contains(.openCompleted) {
         // noop
     } else if event.contains(.errorOccurred) {
-        let error = CFWriteStreamCopyError(writeStream) as ErrorProtocol? ?? TCPSession.Error.Unknown
+        let error = CFWriteStreamCopyError(writeStream) as Swift.Error? ?? TCPSession.Error.Unknown
         session.sendEvent(.Close(error))
     }
     // TODO: (stan@trifia.com) I believe write stream does not inform us whether the TCP connection is closed.

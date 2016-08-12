@@ -18,7 +18,7 @@ final class DataBuffer {
     var data: Data
     
     init(serialQueue optSerialQueue: DispatchQueue? = nil) {
-        self.serialQueue = optSerialQueue ?? DispatchQueue(label: "com.lxcid.network.databuffer", attributes: [ .serial ], target: nil)
+        self.serialQueue = optSerialQueue ?? DispatchQueue(label: "com.lxcid.network.databuffer", attributes: [], target: nil)
         self.data = Data()
     }
     

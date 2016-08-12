@@ -10,7 +10,7 @@ final class DataPipe {
     }
     
     init(serialQueue optSerialQueue: DispatchQueue? = nil) {
-        let serialQueue = optSerialQueue ?? DispatchQueue(label: "com.lxcid.network.datapipe", attributes: [ .serial ], target: nil)
+        let serialQueue = optSerialQueue ?? DispatchQueue(label: "com.lxcid.network.datapipe", attributes: [], target: nil)
         let dataBuffer = DataBuffer(serialQueue: serialQueue)
         self.dataBuffer = dataBuffer
     }
