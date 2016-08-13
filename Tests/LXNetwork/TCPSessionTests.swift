@@ -34,11 +34,15 @@ class TCPSessionTestCase : TCPSessionDelegate {
     }
     
     func session(_ session: TCPSession, didReceiveData data: Data) -> DataBuffer.OutResult {
+        print(String(data: data, encoding: .utf8))
         return .Consume(bytes: data.count)
     }
     
+    func sessionDidOpen(_ session: TCPSession) {
+    }
+    
     func session(_ session: TCPSession, didCloseWithError error: Swift.Error?) {
-        if case TCPSession.State.Closed(let error) = session.state {
+        if case TCPSession.State.closed(let error) = session.state {
             XCTAssertNil(error)
         } else {
             XCTFail()

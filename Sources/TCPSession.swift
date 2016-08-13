@@ -3,6 +3,7 @@ import Foundation
 
 protocol TCPSessionDelegate : class {
     func session(_ session: TCPSession, didReceiveData data: Data) -> DataBuffer.OutResult
+    func sessionDidOpen(_ session: TCPSession)
     func session(_ session: TCPSession, didCloseWithError error: Swift.Error?)
 }
 
@@ -77,8 +78,12 @@ final class TCPSession {
     }
     
     deinit {
-        // FIXME: (stan@trifia.com) A deadlock could appear if state queue end up releasing the session.
-        self.close()
+        // NOTE: (stan@trifia.com) We do not attempt to ensure correctness of
+        // the state at this stage as it would be futile. Unless in the future,
+        // we want to allow other object to query the state of session outside
+        // of its lifecycle, which can be useful.
+        tearDownReadStream(self.readStream)
+        tearDownWriteStream(self.writeStream)
     }
     
     func asyncSend(data: Data) throws {
@@ -86,13 +91,6 @@ final class TCPSession {
             throw Error.NotOpened
         }
         self.writePipe.asyncIn(data: data)
-    }
-    
-    func flush() throws {
-        guard self.state.isOpened else {
-            throw Error.NotOpened
-        }
-        self.writePipe.flush()
     }
     
     func writePipeOutHandler(data: Data) -> DataBuffer.OutResult {
@@ -118,75 +116,60 @@ final class TCPSession {
             return .NoOperation
         }
     }
-    
-    func _openReadWriteStreams() throws {
-        guard CFReadStreamOpen(readStream) else {
-            throw Error.NoReadStream
-        }
-        guard CFWriteStreamOpen(writeStream) else {
-            throw Error.NoWriteStream
-        }
-    }
-    
-    func _closeReadWriteStreams() {
-        CFReadStreamSetClient(self.readStream, 0, nil, nil)
-        CFWriteStreamSetClient(self.writeStream, 0, nil, nil)
-        CFReadStreamSetDispatchQueue(self.readStream, nil)
-        CFWriteStreamSetDispatchQueue(self.writeStream, nil)
-        CFReadStreamClose(self.readStream)
-        CFWriteStreamClose(self.writeStream)
-    }
 }
 
 extension TCPSession {
     enum State : StateType {
-        case Initial
-        case Opening
-        case Opened
-        case Closing
-        case Closed(Swift.Error?)
+        case initial
+        case opening
+        case opened
+        case closing
+        case closed(Swift.Error?)
         
         enum InputEvent {
-            case Open
-            case Opened
-            case Close(Swift.Error?)
-            case Closed(Swift.Error?)
+            case open
+            case opened
+            case close(Swift.Error?)
+            case closed(Swift.Error?)
         }
         
         enum OutputCommand {
-            case None
-            case Open
-            case Close(Swift.Error?)
-            case Closed(Swift.Error?)
+            case none
+            case open
+            case opened
+            case close(Swift.Error?)
+            case closed(Swift.Error?)
         }
         
         func handleEvent(event: InputEvent) -> (State, OutputCommand)? {
             switch (self, event) {
-            case (State.Initial, InputEvent.Open):
-                return (State.Opening, OutputCommand.Open)
-            case (State.Opening, InputEvent.Opened):
-                return (State.Opened, OutputCommand.None)
-            case (let state, InputEvent.Close(let error)) where !state.isClosed:
-                return (State.Closing, OutputCommand.Close(error))
-            case (State.Closing, InputEvent.Closed(let error)):
-                return (State.Closed(error), OutputCommand.Closed(error))
+            case (State.initial, InputEvent.open):
+                return (State.opening, OutputCommand.open)
+            case (State.opening, InputEvent.opened):
+                return (State.opened, OutputCommand.opened)
+            case (let state, InputEvent.close(let error)) where !state.willClose:
+                return (State.closing, OutputCommand.close(error))
+            case (State.closing, InputEvent.closed(let error)):
+                return (State.closed(error), OutputCommand.closed(error))
             default:
                 return nil
             }
         }
         
-        static let initialState = State.Initial
+        static let initialState = State.initial
         
         var isOpened: Bool {
-            if case State.Opened = self {
+            if case State.opened = self {
                 return true
             } else {
                 return false
             }
         }
         
-        var isClosed: Bool {
-            if case State.Closed(_) = self {
+        var willClose: Bool {
+            if case State.closed(_) = self {
+                return true
+            } else if case State.closing = self {
                 return true
             } else {
                 return false
@@ -206,35 +189,55 @@ extension TCPSession {
         }
     }
     
-    func sendEvent(_ inputEvent: State.InputEvent, dispatch: Dispatch = .Async) {
+    func sendEvent(_ inputEvent: State.InputEvent, dispatch: Dispatch = .async) {
         self._state.transaction(dispatch: dispatch, execute: self.stateMachine(inputEvent))
     }
     
     func handleCommand(_ outputCommand: State.OutputCommand) {
         switch (outputCommand) {
-        case .None:
+        case .none:
             break // noop
-        case .Open:
-            do {
-                try self._openReadWriteStreams()
-                self.sendEvent(.Opened, dispatch: .Current)
-            } catch {
-                self.sendEvent(.Close(error), dispatch: .Current)
+        case .open:
+            var isReadStreamOpened = false
+            var isWriteStreamOpened = false
+            let group = DispatchGroup()
+            self.readQueue.async(group: group) {
+                isReadStreamOpened = CFReadStreamOpen(self.readStream)
             }
-        case .Close(let error):
-            self._closeReadWriteStreams()
-            self.sendEvent(.Closed(error), dispatch: .Current)
-        case .Closed(let error):
+            self.writeQueue.async(group: group) {
+                isWriteStreamOpened = CFWriteStreamOpen(self.writeStream)
+            }
+            group.wait()
+            if !isReadStreamOpened {
+                self.sendEvent(.close(Error.NoReadStream), dispatch: .current)
+            } else if !isWriteStreamOpened {
+                self.sendEvent(.close(Error.NoWriteStream), dispatch: .current)
+            } else {
+                self.sendEvent(.opened, dispatch: .current)
+            }
+        case .opened:
+            self.delegate?.sessionDidOpen(self)
+        case .close(let error):
+            let group = DispatchGroup()
+            self.readQueue.async(group: group) {
+                tearDownReadStream(self.readStream)
+            }
+            self.writeQueue.async(group: group) {
+                tearDownWriteStream(self.writeStream)
+            }
+            group.wait()
+            self.sendEvent(.closed(error), dispatch: .current)
+        case .closed(let error):
             self.delegate?.session(self, didCloseWithError: error)
         }
     }
     
     func open() {
-        self.sendEvent(.Open, dispatch: .Sync)
+        self.sendEvent(.open, dispatch: .sync)
     }
     
     func close() {
-        self.sendEvent(.Close(nil), dispatch: .Sync)
+        self.sendEvent(.close(nil), dispatch: .sync)
     }
 }
 
@@ -290,9 +293,9 @@ func readCB(_ optReadStream: CFReadStream?, _ event: CFStreamEventType, _ optCon
         // noop
     } else if event.contains(.errorOccurred) {
         let error = CFReadStreamCopyError(readStream) as Swift.Error? ?? TCPSession.Error.Unknown
-        session.sendEvent(.Close(error))
+        session.sendEvent(.close(error))
     } else if event.contains(.endEncountered) {
-        session.sendEvent(.Close(nil))
+        session.sendEvent(.close(nil))
     }
 }
 
@@ -302,13 +305,25 @@ func writeCB(_ optWriteStream: CFWriteStream?, _ event: CFStreamEventType, _ opt
     }
     let session = Unmanaged<TCPSession>.fromOpaque(context).takeUnretainedValue()
     if event.contains(.canAcceptBytes) {
-        do { try session.flush() } catch {}
+        session.writePipe.flush()
     } else if event.contains(.openCompleted) {
         // noop
     } else if event.contains(.errorOccurred) {
         let error = CFWriteStreamCopyError(writeStream) as Swift.Error? ?? TCPSession.Error.Unknown
-        session.sendEvent(.Close(error))
+        session.sendEvent(.close(error))
     }
     // TODO: (stan@trifia.com) I believe write stream does not inform us whether the TCP connection is closed.
     // So end encountered condition is not implemented here. Have to read the docs to confirm…
+}
+
+func tearDownReadStream(_ readStream: CFReadStream) {
+    CFReadStreamSetClient(readStream, 0, nil, nil)
+    CFReadStreamSetDispatchQueue(readStream, nil)
+    CFReadStreamClose(readStream)
+}
+
+func tearDownWriteStream(_ writeStream: CFWriteStream) {
+    CFWriteStreamSetClient(writeStream, 0, nil, nil)
+    CFWriteStreamSetDispatchQueue(writeStream, nil)
+    CFWriteStreamClose(writeStream)
 }

@@ -37,7 +37,7 @@ final class Atomic<T> {
     ///
     /// Sometimes you execute a get operation, and may followed by
     /// a set operation if condition are met.
-    func transaction(dispatch: Dispatch = .Async, execute transactionHandler: TransactionHandler) {
+    func transaction(dispatch: Dispatch = .async, execute transactionHandler: TransactionHandler) {
         dispatch.execute(on: self.queue, flags: [ .barrier ]) {
             self._transaction(transactionHandler)
         }

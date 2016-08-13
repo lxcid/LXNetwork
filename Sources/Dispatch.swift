@@ -1,19 +1,19 @@
 import Foundation
 
 enum Dispatch {
-    case Current
-    case Sync
-    case Async
+    case current
+    case sync
+    case async
 }
 
 extension Dispatch {
     func execute(on queue: DispatchQueue, flags: DispatchWorkItemFlags = [], execute work: () -> Void) {
         switch self {
-        case .Current:
+        case .current:
             work()
-        case .Sync:
+        case .sync:
             queue.sync(flags: flags, execute: work)
-        case .Async:
+        case .async:
             queue.async(flags: flags, execute: work)
         }
     }
