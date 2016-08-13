@@ -38,17 +38,8 @@ final class Atomic<T> {
     /// Sometimes you execute a get operation, and may followed by
     /// a set operation if condition are met.
     func transaction(dispatch: Dispatch = .Async, execute transactionHandler: TransactionHandler) {
-        switch dispatch {
-        case .Current:
+        dispatch.execute(on: self.queue, flags: [ .barrier ]) {
             self._transaction(transactionHandler)
-        case .Sync:
-            self.queue.sync(flags: [ .barrier ]) {
-                self._transaction(transactionHandler)
-            }
-        case .Async:
-            self.queue.async(flags: [ .barrier ]) {
-                self._transaction(transactionHandler)
-            }
         }
     }
     
@@ -59,18 +50,12 @@ final class Atomic<T> {
         let operation = transactionHandler(currentValue: self._value)
         switch (operation) {
         case .None:
-        break // noop
+            break // noop
         case .Set(let newValue, let completionHandler):
             self._value = newValue
             completionHandler?()
         }
     }
-}
-
-enum Dispatch {
-    case Current
-    case Sync
-    case Async
 }
 
 enum Operation<T> {
