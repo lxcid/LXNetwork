@@ -46,35 +46,6 @@ final class TCPSession {
         self.readPipe = DataPipe(serialQueue: self.readQueue)
         self.writePipe = DataPipe(serialQueue: self.writeQueue)
         self._state = Atomic(value: State.initialState)
-        
-        let commonStreamEvents: CFStreamEventType = [
-            .openCompleted,
-            .errorOccurred,
-            .endEncountered
-        ]
-        var context = CFStreamClientContext()
-        context.info = Unmanaged.passUnretained(self).toOpaque()
-        //context.retain = { Unmanaged<TCPSession>.fromOpaque($0!).retain().toOpaque() }
-        //context.release = { Unmanaged<TCPSession>.fromOpaque($0!).release() }
-        guard CFReadStreamSetClient(self.readStream, commonStreamEvents.union(.hasBytesAvailable).rawValue, readCB, &context) else {
-            throw Error.NoReadStream
-        }
-        guard CFWriteStreamSetClient(self.writeStream, commonStreamEvents.union(.canAcceptBytes).rawValue, writeCB, &context) else {
-            throw Error.NoWriteStream
-        }
-        CFReadStreamSetProperty(self.readStream, CFStreamPropertyKey(kCFStreamPropertyShouldCloseNativeSocket), kCFBooleanTrue)
-        CFWriteStreamSetProperty(self.writeStream, CFStreamPropertyKey(kCFStreamPropertyShouldCloseNativeSocket), kCFBooleanTrue)
-        CFReadStreamSetDispatchQueue(self.readStream, self.readQueue)
-        CFWriteStreamSetDispatchQueue(self.writeStream, self.writeQueue)
-        self.writePipe.outHandler = { [weak self] (data: Data) -> DataBuffer.OutResult in
-            return self?.writePipeOutHandler(data: data) ?? .NoOperation
-        }
-        self.readPipe.outHandler = { [weak self] (data: Data) -> DataBuffer.OutResult in
-            guard let strongSelf = self, let delegate = strongSelf.delegate else {
-                return .NoOperation
-            }
-            return delegate.session(strongSelf, didReceiveData: data)
-        }
     }
     
     deinit {
@@ -82,8 +53,8 @@ final class TCPSession {
         // the state at this stage as it would be futile. Unless in the future,
         // we want to allow other object to query the state of session outside
         // of its lifecycle, which can be useful.
-        tearDownReadStream(self.readStream)
-        tearDownWriteStream(self.writeStream)
+        self._closeReadStream()
+        self._closeWriteStream()
     }
     
     func asyncSend(data: Data) throws {
@@ -202,10 +173,10 @@ extension TCPSession {
             var isWriteStreamOpened = false
             let group = DispatchGroup()
             self.readQueue.async(group: group) {
-                isReadStreamOpened = CFReadStreamOpen(self.readStream)
+                isReadStreamOpened = self._openReadStream()
             }
             self.writeQueue.async(group: group) {
-                isWriteStreamOpened = CFWriteStreamOpen(self.writeStream)
+                isWriteStreamOpened = self._openWriteStream()
             }
             group.wait()
             if !isReadStreamOpened {
@@ -220,10 +191,10 @@ extension TCPSession {
         case .close(let error):
             let group = DispatchGroup()
             self.readQueue.async(group: group) {
-                tearDownReadStream(self.readStream)
+                self._closeReadStream()
             }
             self.writeQueue.async(group: group) {
-                tearDownWriteStream(self.writeStream)
+                self._closeWriteStream()
             }
             group.wait()
             self.sendEvent(.closed(error), dispatch: .current)
@@ -249,6 +220,76 @@ extension TCPSession {
         case Unknown
         
         case NotImplemented
+    }
+}
+
+extension TCPSession {
+    var clientContext: CFStreamClientContext {
+        var context = CFStreamClientContext()
+        context.info = Unmanaged.passUnretained(self).toOpaque()
+        context.retain = { Unmanaged<TCPSession>.fromOpaque($0!).retain().toOpaque() }
+        context.release = { Unmanaged<TCPSession>.fromOpaque($0!).release() }
+        return context
+    }
+    
+    func _openReadStream() -> Bool {
+        if #available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
+            dispatchPrecondition(condition: .onQueue(self.readQueue))
+        }
+        let readStreamEvents: CFStreamEventType = [
+            .endEncountered,
+            .errorOccurred,
+            .hasBytesAvailable,
+            .openCompleted,
+        ]
+        var clientContext = self.clientContext
+        guard CFReadStreamSetClient(self.readStream, readStreamEvents.rawValue, readCB, &clientContext) else {
+            return false
+        }
+        CFReadStreamSetProperty(self.readStream, CFStreamPropertyKey(kCFStreamPropertyShouldCloseNativeSocket), kCFBooleanTrue)
+        CFReadStreamSetDispatchQueue(self.readStream, self.readQueue)
+        self.readPipe.outHandler = { [weak self] (data: Data) -> DataBuffer.OutResult in
+            guard let strongSelf = self, let delegate = strongSelf.delegate else {
+                return .NoOperation
+            }
+            return delegate.session(strongSelf, didReceiveData: data)
+        }
+        return CFReadStreamOpen(self.readStream)
+    }
+    
+    func _openWriteStream() -> Bool {
+        if #available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
+            dispatchPrecondition(condition: .onQueue(self.writeQueue))
+        }
+        let writeStreamEvents: CFStreamEventType = [
+            .canAcceptBytes,
+            .errorOccurred,
+            .openCompleted,
+        ]
+        var clientContext = self.clientContext
+        guard CFWriteStreamSetClient(self.writeStream, writeStreamEvents.rawValue, writeCB, &clientContext) else {
+            return false
+        }
+        CFWriteStreamSetProperty(self.writeStream, CFStreamPropertyKey(kCFStreamPropertyShouldCloseNativeSocket), kCFBooleanTrue)
+        CFWriteStreamSetDispatchQueue(self.writeStream, self.writeQueue)
+        self.writePipe.outHandler = { [weak self] (data: Data) -> DataBuffer.OutResult in
+            return self?.writePipeOutHandler(data: data) ?? .NoOperation
+        }
+        return CFWriteStreamOpen(self.writeStream)
+    }
+    
+    func _closeReadStream() {
+        CFReadStreamSetClient(self.readStream, 0, nil, nil)
+        CFReadStreamSetDispatchQueue(self.readStream, nil)
+        CFReadStreamClose(self.readStream)
+        self.readPipe.outHandler = nil
+    }
+    
+    func _closeWriteStream() {
+        CFWriteStreamSetClient(self.writeStream, 0, nil, nil)
+        CFWriteStreamSetDispatchQueue(self.writeStream, nil)
+        CFWriteStreamClose(self.writeStream)
+        self.writePipe.outHandler = nil
     }
 }
 
@@ -314,16 +355,4 @@ func writeCB(_ optWriteStream: CFWriteStream?, _ event: CFStreamEventType, _ opt
     }
     // TODO: (stan@trifia.com) I believe write stream does not inform us whether the TCP connection is closed.
     // So end encountered condition is not implemented here. Have to read the docs to confirm…
-}
-
-func tearDownReadStream(_ readStream: CFReadStream) {
-    CFReadStreamSetClient(readStream, 0, nil, nil)
-    CFReadStreamSetDispatchQueue(readStream, nil)
-    CFReadStreamClose(readStream)
-}
-
-func tearDownWriteStream(_ writeStream: CFWriteStream) {
-    CFWriteStreamSetClient(writeStream, 0, nil, nil)
-    CFWriteStreamSetDispatchQueue(writeStream, nil)
-    CFWriteStreamClose(writeStream)
 }
