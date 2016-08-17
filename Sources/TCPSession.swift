@@ -48,14 +48,14 @@ final class TCPSession {
         self._state = Atomic(value: State.initialState)
     }
     
-    deinit {
-        // NOTE: (stan@trifia.com) We do not attempt to ensure correctness of
-        // the state at this stage as it would be futile. Unless in the future,
-        // we want to allow other object to query the state of session outside
-        // of its lifecycle, which can be useful.
-        self._closeReadStream()
-        self._closeWriteStream()
-    }
+    // NOTE: (stan@trifia.com) Stream resources are only used during
+    // opening, opened and close states, which we need to release later
+    // when not in used. Because the streams retain its context when in
+    // used the session will not be deallocated during these states.
+    // Based on these assumptions, we can deduce that deinit only happen
+    // if the state is in initial or closed state, which have nothing
+    // to release.
+    //deinit {}
     
     func asyncSend(data: Data) throws {
         guard self.state.isOpened else {
